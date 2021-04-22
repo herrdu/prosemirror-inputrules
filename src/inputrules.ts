@@ -1,5 +1,13 @@
-import { Plugin, EditorState, Transaction } from "prosemirror-state";
+import { Plugin, EditorState, Transaction, TextSelection } from "prosemirror-state";
 import { Schema } from "prosemirror-model";
+import { EditorView } from "prosemirror-view";
+
+type InputRuleHandler<S extends Schema = any> = (
+  state: EditorState<S>,
+  match: string[],
+  start: number,
+  end: number
+) => Transaction<S> | null;
 
 // ::- Input rules are regular expressions describing a piece of text
 // that, when typed, causes something to happen. This might be
@@ -7,9 +15,7 @@ import { Schema } from "prosemirror-model";
 // with `"> "` into a blockquote, or something entirely different.
 export class InputRule<S extends Schema = any> {
   match: RegExp;
-  handler:
-    | string
-    | ((state: EditorState<S>, match: RegExpExecArray[], start: number, end: number) => Transaction<S> | null);
+  handler: string | InputRuleHandler;
 
   // :: (RegExp, union<string, (state: EditorState, match: [string], start: number, end: number) → ?Transaction>)
   // Create an input rule. The rule applies when the user typed
@@ -28,9 +34,7 @@ export class InputRule<S extends Schema = any> {
   // rule's effect, or null to indicate the input was not handled.
   constructor(
     match: RegExp,
-    handler:
-      | string
-      | ((state: EditorState<S>, match: RegExpExecArray[], start: number, end: number) => Transaction<S> | null)
+    handler: string | ((state: EditorState<S>, match: string[], start: number, end: number) => Transaction<S> | null)
   ) {
     this.match = match;
     this.handler = typeof handler == "string" ? stringHandler(handler) : handler;
@@ -38,7 +42,7 @@ export class InputRule<S extends Schema = any> {
 }
 
 function stringHandler(string: string) {
-  return function (state: EditorState, match: any, start: number, end: number) {
+  return function (state: EditorState, match: string[], start: number, end: number) {
     let insert = string;
     if (match[1]) {
       let offset = match[0].lastIndexOf(match[1]);
@@ -80,20 +84,20 @@ export function inputRules({ rules }) {
       handleDOMEvents: {
         compositionend: (view) => {
           setTimeout(() => {
-            let { $cursor } = view.state.selection as any;
+            let { $cursor } = view.state.selection as TextSelection;
             if ($cursor) run(view, $cursor.pos, $cursor.pos, "", rules, plugin);
           });
           return true;
         },
       },
     },
-    // XXX removed by duyutao
-    // isInputRules: true,
+    // @ts-ignore
+    isInputRules: true,
   });
   return plugin;
 }
 
-function run(view: any, from: number, to: number, text: string, rules: InputRule[], plugin: Plugin) {
+function run(view: EditorView, from: number, to: number, text: string, rules: InputRule[], plugin: Plugin) {
   if (view.composing) return false;
   let state = view.state,
     $from = state.doc.resolve(from);
@@ -102,7 +106,7 @@ function run(view: any, from: number, to: number, text: string, rules: InputRule
     $from.parent.textBetween(Math.max(0, $from.parentOffset - MAX_MATCH), $from.parentOffset, null, "\ufffc") + text;
   for (let i = 0; i < rules.length; i++) {
     let match = rules[i].match.exec(textBefore);
-    let tr = match && (rules[i].handler as any)(state, match, from - (match[0].length - text.length), to);
+    let tr = match && (rules[i].handler as InputRuleHandler)(state, match, from - (match[0].length - text.length), to);
     if (!tr) continue;
     view.dispatch(tr.setMeta(plugin, { transform: tr, from, to, text }));
     return true;
